@@ -83,21 +83,34 @@
             responseModalities: ['AUDIO'],
             systemInstruction: {
               parts: [{
-                text: "You are a warm, engaging, and conversational AI voice partner. Chat naturally with the user, brainstorm ideas, answer questions out loud, and verbally confirm whenever you update WorkFlowy."
+                text: "You are a warm, conversational AI partner. You can both ADD and DELETE bullet points in WorkFlowy using your tools. When you add a bullet, keep track of the returned bullet ID so you can delete it if the user asks you to remove or undo it."
               }]
             },
             tools: [{
-              functionDeclarations: [{
-                name: "add_bullet",
-                description: "Creates a new bullet point in WorkFlowy.",
-                parameters: {
-                  type: "OBJECT",
-                  properties: { 
-                    text: { type: "STRING", description: "The content text of the bullet" }
-                  },
-                  required: ["text"]
+              functionDeclarations: [
+                {
+                  name: "add_bullet",
+                  description: "Creates a new bullet point in WorkFlowy.",
+                  parameters: {
+                    type: "OBJECT",
+                    properties: { 
+                      text: { type: "STRING", description: "The content text of the bullet" }
+                    },
+                    required: ["text"]
+                  }
+                },
+                {
+                  name: "delete_bullet",
+                  description: "Deletes an existing bullet point in WorkFlowy using its item ID.",
+                  parameters: {
+                    type: "OBJECT",
+                    properties: { 
+                      nodeId: { type: "STRING", description: "The WorkFlowy node/item ID to delete" }
+                    },
+                    required: ["nodeId"]
+                  }
                 }
-              }]
+              ]
             }]
           },
           callbacks: {
@@ -139,7 +152,7 @@
               // Handle MCP WorkFlowy tool execution
               if (response.toolCall) {
                 for (const fc of response.toolCall.functionCalls) {
-                  log(`🤖 Tool executing: <b>${fc.name}</b>("${fc.args.text}")`);
+                  log(`🤖 Tool executing: <b>${fc.name}</b>`);
                   
                   const result = await mcpClient.callTool({ name: fc.name, arguments: fc.args });
                   log(`✅ WorkFlowy updated!`);
