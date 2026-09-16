@@ -26,7 +26,8 @@
     const log = (msg) => { logDiv.innerHTML += `> ${msg}<br>`; logDiv.scrollTop = logDiv.scrollHeight; };
 
     document.getElementById("startBtn").onclick = async () => {
-      const apiKey = document.getElementById("geminiKey").value;
+      // .trim() prevents accidental spaces when copy-pasting
+      const apiKey = document.getElementById("geminiKey").value.trim();
       if (!apiKey) return alert("Please enter your Gemini API Key!");
 
       try {
@@ -39,16 +40,15 @@
         log("3. Connecting to Gemini Live Voice...");
         const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`);
 
+        let setupComplete = false;
+
         ws.onopen = async () => {
-          log("4. 🟢 Gemini connected!");
+          log("4. 🟢 Gemini socket opened. Sending setup...");
           
           // Live API Setup Frame
           ws.send(JSON.stringify({
             setup: {
-              model: "models/gemini-2.0-flash-exp",
-              generationConfig: {
-                responseModalities: ["TEXT"]
-              },
+              model: "models/gemini-2.0-flash", // Using stable model
               tools: [{
                 functionDeclarations: [{
                   name: "add_bullet",
@@ -64,48 +64,54 @@
               }]
             }
           }));
-
-          // Capture Audio & Force AudioContext Resume
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const audioContext = new AudioContext({ sampleRate: 16000 });
-          
-          if (audioContext.state === "suspended") {
-            await audioContext.resume();
-          }
-
-          const source = audioContext.createMediaStreamSource(stream);
-          const processor = audioContext.createScriptProcessor(4096, 1, 1);
-          
-          let chunksSent = 0;
-          processor.onaudioprocess = (e) => {
-            const data = e.inputBuffer.getChannelData(0);
-            const pcm16 = new Int16Array(data.length);
-            for (let i = 0; i < data.length; i++) pcm16[i] = data[i] * 32767;
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
-            
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ 
-                realtimeInput: { 
-                  mediaChunks: [{ mimeType: "audio/pcm;rate=16000", data: base64 }] 
-                } 
-              }));
-              
-              chunksSent++;
-              if (chunksSent === 5) {
-                log("🎤 Microphone active & streaming audio to Gemini...");
-              }
-            }
-          };
-
-          source.connect(processor);
-          processor.connect(audioContext.destination);
         };
 
-        // Listen for Gemini responses and tool invocations
+        // Initialize audio variables but DO NOT connect them yet
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioContext = new AudioContext({ sampleRate: 16000 });
+        if (audioContext.state === "suspended") await audioContext.resume();
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        
+        let chunksSent = 0;
+        processor.onaudioprocess = (e) => {
+          // STRICT GATE: Only send audio if Gemini has confirmed setup!
+          if (!setupComplete || ws.readyState !== WebSocket.OPEN) return;
+
+          const data = e.inputBuffer.getChannelData(0);
+          const pcm16 = new Int16Array(data.length);
+          for (let i = 0; i < data.length; i++) pcm16[i] = data[i] * 32767;
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+          
+          ws.send(JSON.stringify({ 
+            realtimeInput: { 
+              mediaChunks: [{ mimeType: "audio/pcm;rate=16000", data: base64 }] 
+            } 
+          }));
+          
+          chunksSent++;
+          if (chunksSent === 5) {
+            log("🎤 Microphone active & streaming audio to Gemini...");
+          }
+        };
+
         ws.onmessage = async (event) => {
           let text = event.data;
           if (text instanceof Blob) text = await text.text();
           const msg = JSON.parse(text);
+
+          // Listen for specific server errors!
+          if (msg.error) {
+            log(`❌ Gemini API Error: ${msg.error.message}`);
+          }
+
+          // Start the microphone stream once the server confirms setup
+          if (msg.setupComplete) {
+            log("5. ⚙️ Setup complete! Gemini is listening.");
+            setupComplete = true;
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+          }
 
           const parts = msg.serverContent?.modelTurn?.parts || [];
           for (const part of parts) {
@@ -128,8 +134,7 @@
           }
         };
 
-        ws.onerror = (err) => log(`❌ WebSocket Error: ${JSON.stringify(err)}`);
-        ws.onclose = () => log("⚠️ Gemini connection closed.");
+        ws.onclose = (event) => log(`⚠️ Gemini connection closed. Code: ${event.code}, Reason: ${event.reason || "None"}`);
 
       } catch (err) {
         log(`❌ Error: ${err.message}`);
