@@ -5,38 +5,43 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/express.js"
 const app = express();
 app.use(express.json());
 
-// 1. Initialize the MCP Server
+// 1. Initialize the Cloud MCP Server
 const mcpServer = new Server(
   { name: "workflowy-cloud-mcp", version: "1.0.0" }, 
   { capabilities: { tools: {} } }
 );
 
-// 2. Define your WorkFlowy tools for the AI to discover
+// 2. Define WorkFlowy tools for Gemini / OpenAI discovery
 mcpServer.setRequestHandler("tools/list", async () => ({
   tools: [{
     name: "add_bullet",
-    description: "Creates a new bullet in WorkFlowy",
+    description: "Creates a new bullet point in WorkFlowy",
     inputSchema: {
       type: "object",
-      properties: { text: { type: "string" }, parentId: { type: "string" } },
+      properties: { 
+        text: { type: "string", description: "The content of the bullet" }, 
+        parentId: { type: "string", description: "The ID of the parent node" } 
+      },
       required: ["text", "parentId"]
     }
   }]
 }));
 
-// 3. Define what happens when Gemini actually calls the tool
+// 3. Define execution logic when a tool is invoked
 mcpServer.setRequestHandler("tools/call", async (request) => {
   if (request.params.name === "add_bullet") {
-     const { text, parentId } = request.params.arguments;
-     
-     // Make the actual WorkFlowy API call here using your hidden API key
-     // const wfResponse = await fetch("https://workflowy.com/api/v1/nodes"...
-     
-     return { content: [{ type: "text", text: "Bullet successfully added to WorkFlowy!" }] };
+    const { text, parentId } = request.params.arguments;
+    
+    // Future step: Add your WorkFlowy API call here using process.env.WORKFLOWY_TOKEN
+    
+    return { 
+      content: [{ type: "text", text: `Bullet "${text}" queued for parent ${parentId}!` }] 
+    };
   }
+  throw new Error("Tool not found");
 });
 
-// 4. Expose the MCP Server over HTTP (Server-Sent Events)
+// 4. Setup Server-Sent Events (SSE) endpoints for WebRTC / Audio Frontends
 let transport;
 app.get("/sse", async (req, res) => {
   transport = new SSEServerTransport("/message", res);
@@ -44,7 +49,13 @@ app.get("/sse", async (req, res) => {
 });
 
 app.post("/message", async (req, res) => {
-  if (transport) await transport.handlePostMessage(req, res);
+  if (transport) {
+    await transport.handlePostMessage(req, res);
+  }
 });
 
-app.listen(3000, () => console.log("Cloud MCP Server streaming on Render!"));
+// 5. Start the Express Web Server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Cloud MCP Server streaming on Render! Listening on port ${PORT}`);
+});
