@@ -7,7 +7,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 const app = express();
-app.use(express.json());
+
+// Map to store active SSE transports by sessionId
+const transports = new Map();
 
 // 1. Initialize the Cloud MCP Server
 const mcpServer = new Server(
@@ -70,17 +72,29 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   throw new Error("Tool not found");
 });
 
-// 4. Setup Server-Sent Events (SSE) endpoints
-let transport;
+// 4. Setup Server-Sent Events (SSE) endpoints with Session Map
 app.get("/sse", async (req, res) => {
-  transport = new SSEServerTransport("/message", res);
+  const transport = new SSEServerTransport("/message", res);
+  transports.set(transport.sessionId, transport);
+
+  req.on("close", () => {
+    transports.delete(transport.sessionId);
+  });
+
   await mcpServer.connect(transport);
 });
 
 app.post("/message", async (req, res) => {
-  if (transport) {
-    await transport.handlePostMessage(req, res, req.body);
+  const sessionId = req.query.sessionId;
+  const transport = transports.get(sessionId);
+
+  if (!transport) {
+    res.status(400).send("Session not found");
+    return;
   }
+
+  // SSEServerTransport parses the raw request stream directly
+  await transport.handlePostMessage(req, res);
 });
 
 // 5. Start the Express Web Server
