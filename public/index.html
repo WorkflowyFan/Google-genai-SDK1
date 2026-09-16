@@ -21,6 +21,7 @@
   <script type="module">
     import { Client } from "https://esm.sh/@modelcontextprotocol/sdk/client/index.js";
     import { SSEClientTransport } from "https://esm.sh/@modelcontextprotocol/sdk/client/sse.js";
+    import { GoogleGenAI } from "https://esm.sh/@google/genai";
 
     const logDiv = document.getElementById("log");
     const log = (msg) => { logDiv.innerHTML += `> ${msg}<br>`; logDiv.scrollTop = logDiv.scrollHeight; };
@@ -36,102 +37,88 @@
         await mcpClient.connect(transport);
         log("2. Connected to MCP! Ready to edit WorkFlowy.");
 
-        log("3. Connecting to Gemini Live Voice...");
-        // Strictly use v1alpha endpoint for BidiGenerateContent API key connection
-        const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`);
+        log("3. Initializing Gemini Live SDK...");
+        const ai = new GoogleGenAI({ apiKey });
 
-        let setupComplete = false;
+        let audioContext;
+        let processor;
+        let stream;
 
-        ws.onopen = async () => {
-          log("4. 🟢 Gemini socket opened. Sending setup...");
-          
-          ws.send(JSON.stringify({
-            setup: {
-              model: "models/gemini-2.0-flash-exp",
-              generationConfig: {
-                responseModalities: ["TEXT"]
-              },
-              tools: [{
-                functionDeclarations: [{
-                  name: "add_bullet",
-                  description: "Creates a new bullet point in WorkFlowy.",
-                  parameters: {
-                    type: "OBJECT",
-                    properties: { 
-                      text: { type: "STRING", description: "The content text of the bullet" }
-                    },
-                    required: ["text"]
-                  }
-                }]
+        // Establish connection via Google's official GenAI Web SDK
+        const session = await ai.live.connect({
+          model: 'gemini-2.0-flash-exp',
+          config: {
+            responseModalities: ['TEXT'],
+            tools: [{
+              functionDeclarations: [{
+                name: "add_bullet",
+                description: "Creates a new bullet point in WorkFlowy.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: { 
+                    text: { type: "STRING", description: "The content text of the bullet" }
+                  },
+                  required: ["text"]
+                }
               }]
-            }
-          }));
-        };
-
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const audioContext = new AudioContext({ sampleRate: 16000 });
-        if (audioContext.state === "suspended") await audioContext.resume();
-        const source = audioContext.createMediaStreamSource(stream);
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
-        
-        let chunksSent = 0;
-        processor.onaudioprocess = (e) => {
-          // Gate audio transmission until setup complete frame arrives
-          if (!setupComplete || ws.readyState !== WebSocket.OPEN) return;
-
-          const data = e.inputBuffer.getChannelData(0);
-          const pcm16 = new Int16Array(data.length);
-          for (let i = 0; i < data.length; i++) pcm16[i] = data[i] * 32767;
-          const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
-          
-          ws.send(JSON.stringify({ 
-            realtimeInput: { 
-              mediaChunks: [{ mimeType: "audio/pcm;rate=16000", data: base64 }] 
-            } 
-          }));
-          
-          chunksSent++;
-          if (chunksSent === 5) {
-            log("🎤 Microphone active & streaming audio to Gemini...");
-          }
-        };
-
-        ws.onmessage = async (event) => {
-          let text = event.data;
-          if (text instanceof Blob) text = await text.text();
-          const msg = JSON.parse(text);
-
-          if (msg.error) {
-            log(`❌ Gemini API Error: ${msg.error.message}`);
-          }
-
-          if (msg.setupComplete) {
-            log("5. ⚙️ Setup complete! Gemini is listening.");
-            setupComplete = true;
-            source.connect(processor);
-            processor.connect(audioContext.destination);
-          }
-
-          const parts = msg.serverContent?.modelTurn?.parts || [];
-          for (const part of parts) {
-            if (part.text) {
-              log(`🗣️ <b>Gemini:</b> ${part.text}`);
-            }
-            if (part.functionCall) {
-              const call = part.functionCall;
-              log(`🤖 Gemini called tool: <b>${call.name}</b>("${call.args.text}")`);
+            }]
+          },
+          callbacks: {
+            onopen: async () => {
+              log("4. 🟢 Gemini connected! Starting microphone...");
               
-              const result = await mcpClient.callTool({ name: call.name, arguments: call.args });
-              log(`✅ WorkFlowy updated!`);
+              stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              audioContext = new AudioContext({ sampleRate: 16000 });
+              if (audioContext.state === "suspended") await audioContext.resume();
               
-              ws.send(JSON.stringify({
-                toolResponse: { functionResponses: [{ id: call.id, name: call.name, response: result }] }
-              }));
-            }
-          }
-        };
+              const source = audioContext.createMediaStreamSource(stream);
+              processor = audioContext.createScriptProcessor(4096, 1, 1);
+              
+              let chunksSent = 0;
+              processor.onaudioprocess = (e) => {
+                const data = e.inputBuffer.getChannelData(0);
+                const pcm16 = new Int16Array(data.length);
+                for (let i = 0; i < data.length; i++) pcm16[i] = data[i] * 32767;
+                const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+                
+                session.sendRealtimeInput({
+                  audio: { data: base64, mimeType: "audio/pcm;rate=16000" }
+                });
 
-        ws.onclose = (event) => log(`⚠️ Gemini connection closed. Code: ${event.code}, Reason: ${event.reason || "None"}`);
+                chunksSent++;
+                if (chunksSent === 5) {
+                  log("🎤 Microphone active & streaming live to Gemini!");
+                }
+              };
+
+              source.connect(processor);
+              processor.connect(audioContext.destination);
+            },
+            onmessage: async (response) => {
+              const parts = response.serverContent?.modelTurn?.parts || [];
+              for (const part of parts) {
+                if (part.text) {
+                  log(`🗣️ <b>Gemini:</b> ${part.text}`);
+                }
+              }
+
+              if (response.toolCall) {
+                for (const fc of response.toolCall.functionCalls) {
+                  log(`🤖 Gemini called tool: <b>${fc.name}</b>("${fc.args.text}")`);
+                  
+                  const result = await mcpClient.callTool({ name: fc.name, arguments: fc.args });
+                  log(`✅ WorkFlowy updated!`);
+                  
+                  session.sendToolResponse({
+                    functionResponses: [{ id: fc.id, name: fc.name, response: result }]
+                  });
+                }
+              }
+            },
+            onerror: (e) => log(`❌ Gemini Error: ${e.message}`),
+            onclose: (e) => log(`⚠️ Connection closed: ${e.reason || "Disconnected"}`)
+          }
+        });
 
       } catch (err) {
         log(`❌ Error: ${err.message}`);
