@@ -26,7 +26,6 @@
     const logDiv = document.getElementById("log");
     const log = (msg) => { logDiv.innerHTML += `> ${msg}<br>`; logDiv.scrollTop = logDiv.scrollHeight; };
 
-    // --- Audio Output Playback Queue (24kHz PCM) ---
     let audioOutCtx;
     let nextStartTime = 0;
 
@@ -58,7 +57,6 @@
       nextStartTime += buffer.duration;
     }
 
-    // --- Main Voice Connection ---
     document.getElementById("startBtn").onclick = async () => {
       const apiKey = document.getElementById("geminiKey").value.trim();
       if (!apiKey) return alert("Please enter your Gemini API Key!");
@@ -83,11 +81,16 @@
             responseModalities: ['AUDIO'],
             systemInstruction: {
               parts: [{
-                text: "You are a warm, conversational AI partner. You can both ADD and DELETE bullet points in WorkFlowy using your tools. When you add a bullet, keep track of the returned bullet ID so you can delete it if the user asks you to remove or undo it."
+                text: "You are a warm, conversational AI voice assistant with direct control over WorkFlowy. You have tools to READ the entire document (get_nodes), ADD new bullets (add_bullet), MODIFY/RENAME existing bullets (update_bullet), and DELETE bullets (delete_bullet). Always use 'get_nodes' when asked to check or read the outline."
               }]
             },
             tools: [{
               functionDeclarations: [
+                {
+                  name: "get_nodes",
+                  description: "Retrieves all bullet points and the entire document structure from WorkFlowy.",
+                  parameters: { type: "OBJECT", properties: {} }
+                },
                 {
                   name: "add_bullet",
                   description: "Creates a new bullet point in WorkFlowy.",
@@ -97,6 +100,18 @@
                       text: { type: "STRING", description: "The content text of the bullet" }
                     },
                     required: ["text"]
+                  }
+                },
+                {
+                  name: "update_bullet",
+                  description: "Modifies or updates the text of an existing bullet point in WorkFlowy using its item ID.",
+                  parameters: {
+                    type: "OBJECT",
+                    properties: { 
+                      nodeId: { type: "STRING", description: "The WorkFlowy node/item ID to modify" },
+                      text: { type: "STRING", description: "The new content text for the bullet" }
+                    },
+                    required: ["nodeId", "text"]
                   }
                 },
                 {
@@ -117,7 +132,6 @@
             onopen: async () => {
               log("4. 🟢 Gemini connected! Start talking...");
               
-              // Microphone Capture
               stream = await navigator.mediaDevices.getUserMedia({ audio: true });
               inputAudioCtx = new AudioContext({ sampleRate: 16000 });
               if (inputAudioCtx.state === "suspended") await inputAudioCtx.resume();
@@ -141,7 +155,6 @@
               log("🎤 Live audio streaming active!");
             },
             onmessage: async (response) => {
-              // Play incoming audio chunks through the Web Audio API speaker queue
               const parts = response.serverContent?.modelTurn?.parts || [];
               for (const part of parts) {
                 if (part.inlineData && part.inlineData.mimeType?.startsWith("audio/pcm")) {
@@ -149,13 +162,12 @@
                 }
               }
 
-              // Handle MCP WorkFlowy tool execution
               if (response.toolCall) {
                 for (const fc of response.toolCall.functionCalls) {
                   log(`🤖 Tool executing: <b>${fc.name}</b>`);
                   
                   const result = await mcpClient.callTool({ name: fc.name, arguments: fc.args });
-                  log(`✅ WorkFlowy updated!`);
+                  log(`✅ WorkFlowy tool execution complete!`);
                   
                   session.sendToolResponse({
                     functionResponses: [{ id: fc.id, name: fc.name, response: result }]
