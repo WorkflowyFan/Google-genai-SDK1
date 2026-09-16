@@ -37,22 +37,17 @@
         await mcpClient.connect(transport);
         log("2. Connected to MCP! Ready to edit WorkFlowy.");
 
-        log("3. Initializing Gemini Live SDK (v1alpha)...");
-        // Pass apiVersion directly to constructor options
-        const ai = new GoogleGenAI({ 
-          apiKey,
-          apiVersion: "v1alpha"
-        });
+        log("3. Initializing Gemini Live SDK...");
+        const ai = new GoogleGenAI({ apiKey });
 
         let audioContext;
         let processor;
         let stream;
 
         const session = await ai.live.connect({
-          model: 'gemini-2.0-flash-exp',
+          model: 'gemini-3.8-live',
           config: {
-            // Live API requires AUDIO modality
-            responseModalities: ['AUDIO', 'TEXT'],
+            responseModalities: ['AUDIO'],
             tools: [{
               functionDeclarations: [{
                 name: "add_bullet",
