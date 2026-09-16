@@ -30,8 +30,13 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "get_nodes",
-      description: "Retrieves all nodes and the entire document structure from WorkFlowy",
-      inputSchema: { type: "object", properties: {} }
+      description: "Retrieves all bullet points and nested node structures from WorkFlowy. Call without arguments to get the entire document tree, or pass parentId to inspect sub-bullets of a specific item.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          parentId: { type: "string", description: "Optional parent bullet ID to fetch direct sub-bullets for." }
+        }
+      }
     },
     {
       name: "add_bullet",
@@ -78,12 +83,24 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error("WORKFLOWY_TOKEN environment variable is missing on Render.");
   }
 
-  // View entire document structure
+  // View entire document structure or specific sub-bullets
   if (request.params.name === "get_nodes") {
-    const response = await fetch("https://workflowy.com/api/v1/nodes", {
+    const { parentId } = request.params.arguments || {};
+    const url = parentId 
+      ? `https://workflowy.com/api/v1/nodes?parent_id=${parentId}`
+      : "https://workflowy.com/api/v1/nodes-export";
+
+    let response = await fetch(url, {
       method: "GET",
       headers: { "Authorization": `Bearer ${apiKey}` }
     });
+
+    if (!response.ok && !parentId) {
+      response = await fetch("https://workflowy.com/api/v1/nodes?parent_id=None", {
+        headers: { "Authorization": `Bearer ${apiKey}` }
+      });
+    }
+
     const data = await response.json();
     if (!response.ok) throw new Error(`WorkFlowy API error: ${JSON.stringify(data)}`);
     return { content: [{ type: "text", text: JSON.stringify(data) }] };

@@ -81,15 +81,20 @@
             responseModalities: ['AUDIO'],
             systemInstruction: {
               parts: [{
-                text: "You are a warm, conversational AI voice assistant with direct control over WorkFlowy. You have tools to READ the entire document (get_nodes), ADD new bullets (add_bullet), MODIFY/RENAME existing bullets (update_bullet), and DELETE bullets (delete_bullet). Always use 'get_nodes' when asked to check or read the outline."
+                text: "You are a warm, conversational AI partner with direct control over WorkFlowy. You have tools to READ all bullets and nested sub-bullets across the outline (get_nodes), ADD new bullets (add_bullet), MODIFY/RENAME existing bullets (update_bullet), and DELETE bullets (delete_bullet). Always call 'get_nodes' first when asked to review or edit items so you can see full nested hierarchies and locate exact bullet IDs."
               }]
             },
             tools: [{
               functionDeclarations: [
                 {
                   name: "get_nodes",
-                  description: "Retrieves all bullet points and the entire document structure from WorkFlowy.",
-                  parameters: { type: "OBJECT", properties: {} }
+                  description: "Retrieves all bullet points and nested node structures from WorkFlowy. Call without arguments to fetch the entire document tree, or pass parentId to inspect sub-bullets of a specific item.",
+                  parameters: {
+                    type: "OBJECT",
+                    properties: {
+                      parentId: { type: "STRING", description: "Optional parent bullet ID to fetch direct sub-bullets for." }
+                    }
+                  }
                 },
                 {
                   name: "add_bullet",
