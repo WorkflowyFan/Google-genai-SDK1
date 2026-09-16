@@ -15,7 +15,7 @@ const mcpServer = new Server(
   { capabilities: { tools: {} } }
 );
 
-// 2. Define WorkFlowy tools for Gemini / OpenAI discovery
+// 2. Define WorkFlowy tools for Gemini / Voice Clients
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [{
     name: "add_bullet",
@@ -23,23 +23,48 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     inputSchema: {
       type: "object",
       properties: { 
-        text: { type: "string", description: "The content of the bullet" }, 
-        parentId: { type: "string", description: "The ID of the parent node" } 
+        text: { type: "string", description: "The content text for the bullet" }, 
+        parentId: { type: "string", description: "Optional WorkFlowy parent node ID" } 
       },
-      required: ["text", "parentId"]
+      required: ["text"]
     }
   }]
 }));
 
-// 3. Define execution logic when a tool is invoked
+// 3. Define execution logic to call WorkFlowy API
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (request.params.name === "add_bullet") {
     const { text, parentId } = request.params.arguments;
-    
-    // Future step: Add your WorkFlowy API call here using process.env.WORKFLOWY_TOKEN
-    
+    const apiKey = process.env.WORKFLOWY_TOKEN;
+
+    if (!apiKey) {
+      throw new Error("WORKFLOWY_TOKEN environment variable is missing on Render.");
+    }
+
+    // Live HTTP request to official WorkFlowy API
+    const response = await fetch("https://workflowy.com/api/v1/nodes", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        parent_id: parentId || "None",
+        name: text
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(`WorkFlowy API error: ${JSON.stringify(data)}`);
+    }
+
     return { 
-      content: [{ type: "text", text: `Bullet "${text}" queued for parent ${parentId}!` }] 
+      content: [{ 
+        type: "text", 
+        text: `Successfully created WorkFlowy bullet: "${text}"` 
+      }] 
     };
   }
   throw new Error("Tool not found");
