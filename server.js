@@ -96,35 +96,6 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   throw new Error("Tool not found");
 });
 
-    // Live HTTP request to official WorkFlowy API
-    const response = await fetch("https://workflowy.com/api/v1/nodes", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        parent_id: parentId || "None",
-        name: text
-      })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(`WorkFlowy API error: ${JSON.stringify(data)}`);
-    }
-
-    return { 
-      content: [{ 
-        type: "text", 
-        text: `Successfully created WorkFlowy bullet: "${text}"` 
-      }] 
-    };
-  }
-  throw new Error("Tool not found");
-});
-
 // 4. Setup Server-Sent Events (SSE) endpoints with Session Map
 app.get("/sse", async (req, res) => {
   const transport = new SSEServerTransport("/message", res);
