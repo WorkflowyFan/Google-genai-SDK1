@@ -8,6 +8,8 @@ import {
 
 const app = express();
 
+app.use(express.static("public"));
+
 // Map to store active SSE transports by sessionId
 const transports = new Map();
 
