@@ -1,6 +1,10 @@
 import express from 'express';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { 
+  ListToolsRequestSchema, 
+  CallToolRequestSchema 
+} from "@modelcontextprotocol/sdk/types.js";
 
 const app = express();
 app.use(express.json());
@@ -12,7 +16,7 @@ const mcpServer = new Server(
 );
 
 // 2. Define WorkFlowy tools for Gemini / OpenAI discovery
-mcpServer.setRequestHandler("tools/list", async () => ({
+mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [{
     name: "add_bullet",
     description: "Creates a new bullet point in WorkFlowy",
@@ -28,7 +32,7 @@ mcpServer.setRequestHandler("tools/list", async () => ({
 }));
 
 // 3. Define execution logic when a tool is invoked
-mcpServer.setRequestHandler("tools/call", async (request) => {
+mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (request.params.name === "add_bullet") {
     const { text, parentId } = request.params.arguments;
     
@@ -41,7 +45,7 @@ mcpServer.setRequestHandler("tools/call", async (request) => {
   throw new Error("Tool not found");
 });
 
-// 4. Setup Server-Sent Events (SSE) endpoints for WebRTC / Audio Frontends
+// 4. Setup Server-Sent Events (SSE) endpoints
 let transport;
 app.get("/sse", async (req, res) => {
   transport = new SSEServerTransport("/message", res);
