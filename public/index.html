@@ -26,7 +26,7 @@
     const logDiv = document.getElementById("log");
     const log = (msg) => { logDiv.innerHTML += `> ${msg}<br>`; logDiv.scrollTop = logDiv.scrollHeight; };
 
-    // --- Audio Output Playback Queue ---
+    // --- Audio Output Playback Queue (24kHz PCM) ---
     let audioOutCtx;
     let nextStartTime = 0;
 
@@ -38,7 +38,6 @@
         audioOutCtx.resume();
       }
 
-      // Convert Base64 PCM16 to Float32 Array
       const binary = atob(base64PCM);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -46,7 +45,6 @@
       const float32 = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
 
-      // Schedule contiguous audio buffer playback
       const buffer = audioOutCtx.createBuffer(1, float32.length, 24000);
       buffer.getChannelData(0).set(float32);
 
@@ -60,7 +58,7 @@
       nextStartTime += buffer.duration;
     }
 
-    // --- Main Connection Flow ---
+    // --- Main Voice Connection ---
     document.getElementById("startBtn").onclick = async () => {
       const apiKey = document.getElementById("geminiKey").value.trim();
       if (!apiKey) return alert("Please enter your Gemini API Key!");
@@ -72,20 +70,20 @@
         await mcpClient.connect(transport);
         log("2. Connected to MCP! Ready to edit WorkFlowy.");
 
-        log("3. Initializing Gemini Conversational Voice...");
-        const ai = new GoogleGenAI({ apiKey, apiVersion: "v1alpha" });
+        log("3. Initializing Gemini Live Voice (Audio-Only)...");
+        const ai = new GoogleGenAI({ apiKey });
 
         let inputAudioCtx;
         let processor;
         let stream;
 
         const session = await ai.live.connect({
-          model: 'gemini-2.0-flash-exp',
+          model: 'gemini-3.8-live',
           config: {
-            responseModalities: ['AUDIO', 'TEXT'],
+            responseModalities: ['AUDIO'],
             systemInstruction: {
               parts: [{
-                text: "You are a warm, witty, and highly conversational AI voice assistant. Chat naturally with the user, answer their questions, brainstorm ideas, and verbally confirm when you add items to WorkFlowy."
+                text: "You are a warm, engaging, and conversational AI voice partner. Chat naturally with the user, brainstorm ideas, answer questions out loud, and verbally confirm whenever you update WorkFlowy."
               }]
             },
             tools: [{
@@ -104,7 +102,7 @@
           },
           callbacks: {
             onopen: async () => {
-              log("4. 🟢 Gemini connected! Say hello...");
+              log("4. 🟢 Gemini connected! Start talking...");
               
               // Microphone Capture
               stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -127,20 +125,18 @@
 
               source.connect(processor);
               processor.connect(inputAudioCtx.destination);
-              log("🎤 Live conversation active!");
+              log("🎤 Live audio streaming active!");
             },
             onmessage: async (response) => {
+              // Play incoming audio chunks through the Web Audio API speaker queue
               const parts = response.serverContent?.modelTurn?.parts || [];
               for (const part of parts) {
-                if (part.text) {
-                  log(`🗣️ <b>Gemini:</b> ${part.text}`);
-                }
-                // Stream Gemini's voice back through your speakers
-                if (part.inlineData && part.inlineData.mimeType.startsWith("audio/pcm")) {
+                if (part.inlineData && part.inlineData.mimeType?.startsWith("audio/pcm")) {
                   playPCM16AudioChunk(part.inlineData.data);
                 }
               }
 
+              // Handle MCP WorkFlowy tool execution
               if (response.toolCall) {
                 for (const fc of response.toolCall.functionCalls) {
                   log(`🤖 Tool executing: <b>${fc.name}</b>("${fc.args.text}")`);
