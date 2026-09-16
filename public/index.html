@@ -37,14 +37,17 @@
         await mcpClient.connect(transport);
         log("2. Connected to MCP! Ready to edit WorkFlowy.");
 
-        log("3. Initializing Gemini Live SDK...");
-        const ai = new GoogleGenAI({ apiKey });
+        log("3. Initializing Gemini Live SDK (v1alpha)...");
+        // Explicitly set apiVersion to v1alpha for Multimodal Live support
+        const ai = new GoogleGenAI({ 
+          apiKey,
+          httpOptions: { apiVersion: 'v1alpha' }
+        });
 
         let audioContext;
         let processor;
         let stream;
 
-        // Establish connection via Google's official GenAI Web SDK
         const session = await ai.live.connect({
           model: 'gemini-2.0-flash-exp',
           config: {
