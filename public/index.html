@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorkFlowy Voice Agent</title>
+  <style>
+    body { font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 20px; text-align: center; }
+    button { padding: 15px 30px; font-size: 18px; border-radius: 8px; cursor: pointer; background: #007bff; color: white; border: none; margin: 20px 0; }
+    #log { text-align: left; background: #f4f4f4; padding: 15px; border-radius: 8px; height: 300px; overflow-y: auto; font-family: monospace; }
+    input { padding: 10px; width: 80%; margin-top: 10px; border: 1px solid #ccc; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h2>🎙️ WorkFlowy Voice Assistant</h2>
+  <input type="password" id="geminiKey" placeholder="Paste your Gemini API Key here...">
+  <br>
+  <button id="startBtn">Start Voice Session</button>
+  <div id="log">Awaiting connection...<br></div>
+
+  <!-- Using ESM to import the MCP SDK directly into the browser! -->
+  <script type="module">
+    import { Client } from "https://esm.sh/@modelcontextprotocol/sdk/client/index.js";
+    import { SSEClientTransport } from "https://esm.sh/@modelcontextprotocol/sdk/client/sse.js";
+
+    const logDiv = document.getElementById("log");
+    const log = (msg) => { logDiv.innerHTML += `> ${msg}<br>`; logDiv.scrollTop = logDiv.scrollHeight; };
+
+    document.getElementById("startBtn").onclick = async () => {
+      const apiKey = document.getElementById("geminiKey").value;
+      if (!apiKey) return alert("Please enter your Gemini API Key!");
+
+      try {
+        log("1. Connecting to Render MCP Server...");
+        const transport = new SSEClientTransport(new URL("/sse", window.location.href));
+        const mcpClient = new Client({ name: "voice-frontend", version: "1.0.0" });
+        await mcpClient.connect(transport);
+        log("2. Connected to MCP! Ready to edit WorkFlowy.");
+
+        log("3. Connecting to Gemini Live Voice...");
+        const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`);
+
+        ws.onopen = async () => {
+          log("4. 🟢 Gemini connected! Start speaking.");
+          
+          // Tell Gemini about our add_bullet tool
+          ws.send(JSON.stringify({
+            setup: {
+              model: "models/gemini-2.5-flash",
+              tools: [{
+                functionDeclarations: [{
+                  name: "add_bullet",
+                  description: "Creates a new bullet point in WorkFlowy.",
+                  parameters: {
+                    type: "OBJECT",
+                    properties: { 
+                      text: { type: "STRING", description: "The content of the bullet" }
+                    },
+                    required: ["text"]
+                  }
+                }]
+              }]
+            }
+          }));
+
+          // Start Microphone
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const audioContext = new AudioContext({ sampleRate: 16000 });
+          const source = audioContext.createMediaStreamSource(stream);
+          const processor = audioContext.createScriptProcessor(4096, 1, 1);
+          
+          // Stream raw audio to Gemini
+          processor.onaudioprocess = (e) => {
+            const data = e.inputBuffer.getChannelData(0);
+            const pcm16 = new Int16Array(data.length);
+            for (let i = 0; i < data.length; i++) pcm16[i] = data[i] * 32767;
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+            
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ realtimeInput: { mediaChunks: [{ mimeType: "audio/pcm;rate=16000", data: base64 }] } }));
+            }
+          };
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+        };
+
+        // Listen for Gemini telling us to use WorkFlowy
+        ws.onmessage = async (event) => {
+          let text = event.data;
+          if (text instanceof Blob) text = await text.text();
+          const msg = JSON.parse(text);
+
+          const parts = msg.serverContent?.modelTurn?.parts || [];
+          for (const part of parts) {
+            if (part.functionCall) {
+              const call = part.functionCall;
+              log(`🤖 Gemini wants to call: <b>${call.name}</b>("${call.args.text}")`);
+              
+              // Forward the command to our Render MCP Server
+              const result = await mcpClient.callTool({ name: call.name, arguments: call.args });
+              log(`✅ WorkFlowy updated!`);
+              
+              // Tell Gemini it succeeded so it can verbally confirm!
+              ws.send(JSON.stringify({
+                toolResponse: { functionResponses: [{ id: call.id, name: call.name, response: result }] }
+              }));
+            }
+          }
+        };
+
+      } catch (err) {
+        log(`❌ Error: ${err.message}`);
+      }
+    };
+  </script>
+</body>
+</html>
