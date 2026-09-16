@@ -29,31 +29,72 @@ const mcpServer = new Server(
   { capabilities: { tools: {} } }
 );
 
-// 2. Define WorkFlowy tools for Gemini / Voice Clients
+// Add delete_bullet to ListToolsRequestSchema
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [{
-    name: "add_bullet",
-    description: "Creates a new bullet point in WorkFlowy",
-    inputSchema: {
-      type: "object",
-      properties: { 
-        text: { type: "string", description: "The content text for the bullet" }, 
-        parentId: { type: "string", description: "Optional WorkFlowy parent node ID" } 
-      },
-      required: ["text"]
+  tools: [
+    {
+      name: "add_bullet",
+      description: "Creates a new bullet point in WorkFlowy",
+      inputSchema: {
+        type: "object",
+        properties: { 
+          text: { type: "string", description: "The content text for the bullet" }, 
+          parentId: { type: "string", description: "Optional WorkFlowy parent node ID" } 
+        },
+        required: ["text"]
+      }
+    },
+    {
+      name: "delete_bullet",
+      description: "Deletes an existing bullet point in WorkFlowy using its item ID",
+      inputSchema: {
+        type: "object",
+        properties: { 
+          nodeId: { type: "string", description: "The WorkFlowy node/item ID to delete" } 
+        },
+        required: ["nodeId"]
+      }
     }
-  }]
+  ]
 }));
 
-// 3. Define execution logic to call WorkFlowy API
+// Add delete_bullet execution logic to CallToolRequestSchema
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const apiKey = process.env.WORKFLOWY_TOKEN;
+  if (!apiKey) {
+    throw new Error("WORKFLOWY_TOKEN environment variable is missing on Render.");
+  }
+
   if (request.params.name === "add_bullet") {
     const { text, parentId } = request.params.arguments;
-    const apiKey = process.env.WORKFLOWY_TOKEN;
+    const response = await fetch("https://workflowy.com/api/v1/nodes", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ parent_id: parentId || "None", name: text })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(`WorkFlowy API error: ${JSON.stringify(data)}`);
+    return { content: [{ type: "text", text: `Created WorkFlowy bullet: "${text}" (ID: ${data.item_id})` }] };
+  }
 
-    if (!apiKey) {
-      throw new Error("WORKFLOWY_TOKEN environment variable is missing on Render.");
+  if (request.params.name === "delete_bullet") {
+    const { nodeId } = request.params.arguments;
+    const response = await fetch(`https://workflowy.com/api/v1/nodes/${nodeId}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${apiKey}` }
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(`WorkFlowy API error: ${JSON.stringify(data)}`);
     }
+    return { content: [{ type: "text", text: `Successfully deleted WorkFlowy bullet ID: "${nodeId}"` }] };
+  }
+
+  throw new Error("Tool not found");
+});
 
     // Live HTTP request to official WorkFlowy API
     const response = await fetch("https://workflowy.com/api/v1/nodes", {
