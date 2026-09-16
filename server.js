@@ -1,4 +1,6 @@
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { 
@@ -6,9 +8,17 @@ import {
   CallToolRequestSchema 
 } from "@modelcontextprotocol/sdk/types.js";
 
+// Explicit directory path setup for Node ES Modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 
-app.use(express.static("public"));
+// Serve static files and explicitly route root to index.html
+app.use(express.static(path.join(__dirname, "public")));
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
 // Map to store active SSE transports by sessionId
 const transports = new Map();
@@ -95,7 +105,6 @@ app.post("/message", async (req, res) => {
     return;
   }
 
-  // SSEServerTransport parses the raw request stream directly
   await transport.handlePostMessage(req, res);
 });
 
