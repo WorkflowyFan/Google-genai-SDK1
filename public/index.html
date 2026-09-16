@@ -38,7 +38,7 @@
         log("2. Connected to MCP! Ready to edit WorkFlowy.");
 
         log("3. Connecting to Gemini Live Voice...");
-        const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`);
+        const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`);
 
         let setupComplete = false;
 
@@ -48,7 +48,7 @@
           // Live API Setup Frame
           ws.send(JSON.stringify({
             setup: {
-              model: "models/gemini-3.6-flash",
+              model: "models/gemini-2.0-flash-exp",
               tools: [{
                 functionDeclarations: [{
                   name: "add_bullet",
