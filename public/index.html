@@ -26,6 +26,41 @@
     const logDiv = document.getElementById("log");
     const log = (msg) => { logDiv.innerHTML += `> ${msg}<br>`; logDiv.scrollTop = logDiv.scrollHeight; };
 
+    // --- Audio Output Playback Queue ---
+    let audioOutCtx;
+    let nextStartTime = 0;
+
+    function playPCM16AudioChunk(base64PCM) {
+      if (!audioOutCtx) {
+        audioOutCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+      }
+      if (audioOutCtx.state === "suspended") {
+        audioOutCtx.resume();
+      }
+
+      // Convert Base64 PCM16 to Float32 Array
+      const binary = atob(base64PCM);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const int16 = new Int16Array(bytes.buffer);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+
+      // Schedule contiguous audio buffer playback
+      const buffer = audioOutCtx.createBuffer(1, float32.length, 24000);
+      buffer.getChannelData(0).set(float32);
+
+      const source = audioOutCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioOutCtx.destination);
+
+      const currentTime = audioOutCtx.currentTime;
+      if (nextStartTime < currentTime) nextStartTime = currentTime;
+      source.start(nextStartTime);
+      nextStartTime += buffer.duration;
+    }
+
+    // --- Main Connection Flow ---
     document.getElementById("startBtn").onclick = async () => {
       const apiKey = document.getElementById("geminiKey").value.trim();
       if (!apiKey) return alert("Please enter your Gemini API Key!");
@@ -37,17 +72,22 @@
         await mcpClient.connect(transport);
         log("2. Connected to MCP! Ready to edit WorkFlowy.");
 
-        log("3. Initializing Gemini Live SDK...");
-        const ai = new GoogleGenAI({ apiKey });
+        log("3. Initializing Gemini Conversational Voice...");
+        const ai = new GoogleGenAI({ apiKey, apiVersion: "v1alpha" });
 
-        let audioContext;
+        let inputAudioCtx;
         let processor;
         let stream;
 
         const session = await ai.live.connect({
-          model: 'gemini-3.8-live',
+          model: 'gemini-2.0-flash-exp',
           config: {
-            responseModalities: ['AUDIO'],
+            responseModalities: ['AUDIO', 'TEXT'],
+            systemInstruction: {
+              parts: [{
+                text: "You are a warm, witty, and highly conversational AI voice assistant. Chat naturally with the user, answer their questions, brainstorm ideas, and verbally confirm when you add items to WorkFlowy."
+              }]
+            },
             tools: [{
               functionDeclarations: [{
                 name: "add_bullet",
@@ -64,16 +104,16 @@
           },
           callbacks: {
             onopen: async () => {
-              log("4. 🟢 Gemini connected! Starting microphone...");
+              log("4. 🟢 Gemini connected! Say hello...");
               
+              // Microphone Capture
               stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-              audioContext = new AudioContext({ sampleRate: 16000 });
-              if (audioContext.state === "suspended") await audioContext.resume();
+              inputAudioCtx = new AudioContext({ sampleRate: 16000 });
+              if (inputAudioCtx.state === "suspended") await inputAudioCtx.resume();
               
-              const source = audioContext.createMediaStreamSource(stream);
-              processor = audioContext.createScriptProcessor(4096, 1, 1);
+              const source = inputAudioCtx.createMediaStreamSource(stream);
+              processor = inputAudioCtx.createScriptProcessor(4096, 1, 1);
               
-              let chunksSent = 0;
               processor.onaudioprocess = (e) => {
                 const data = e.inputBuffer.getChannelData(0);
                 const pcm16 = new Int16Array(data.length);
@@ -83,15 +123,11 @@
                 session.sendRealtimeInput({
                   audio: { data: base64, mimeType: "audio/pcm;rate=16000" }
                 });
-
-                chunksSent++;
-                if (chunksSent === 5) {
-                  log("🎤 Microphone active & streaming live to Gemini!");
-                }
               };
 
               source.connect(processor);
-              processor.connect(audioContext.destination);
+              processor.connect(inputAudioCtx.destination);
+              log("🎤 Live conversation active!");
             },
             onmessage: async (response) => {
               const parts = response.serverContent?.modelTurn?.parts || [];
@@ -99,11 +135,15 @@
                 if (part.text) {
                   log(`🗣️ <b>Gemini:</b> ${part.text}`);
                 }
+                // Stream Gemini's voice back through your speakers
+                if (part.inlineData && part.inlineData.mimeType.startsWith("audio/pcm")) {
+                  playPCM16AudioChunk(part.inlineData.data);
+                }
               }
 
               if (response.toolCall) {
                 for (const fc of response.toolCall.functionCalls) {
-                  log(`🤖 Gemini called tool: <b>${fc.name}</b>("${fc.args.text}")`);
+                  log(`🤖 Tool executing: <b>${fc.name}</b>("${fc.args.text}")`);
                   
                   const result = await mcpClient.callTool({ name: fc.name, arguments: fc.args });
                   log(`✅ WorkFlowy updated!`);
@@ -114,7 +154,7 @@
                 }
               }
             },
-            onerror: (e) => log(`❌ Gemini Error: ${e.message}`),
+            onerror: (e) => log(`❌ Error: ${e.message}`),
             onclose: (e) => log(`⚠️ Connection closed: ${e.reason || "Disconnected"}`)
           }
         });
